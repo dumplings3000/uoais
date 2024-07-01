@@ -47,7 +47,7 @@ docker run \
     -e DISPLAY=$DISPLAY \
     -e QT_X11_NO_MITSHM=1 \
     -e XAUTHORITY=$XAUTH \
-    -v "/home/$user/segmentation:/home/user/segmentation" \
+    -v "/home/$user/uoais:/home/user/uoais" \
     -v "$XAUTH:$XAUTH" \
     -v "/tmp/.X11-unix:/tmp/.X11-unix" \
     -v "/etc/localtime:/etc/localtime:ro" \
