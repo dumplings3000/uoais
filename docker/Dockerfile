@@ -1,3 +1,4 @@
+
 FROM nvidia/cuda:11.3.1-cudnn8-devel-ubuntu20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -47,6 +48,22 @@ RUN pip3 install --upgrade pip
 
 ## Dependency installation
 RUN pip3 install torch==1.10.2+cu113 torchvision==0.11.3+cu113 torchaudio==0.10.2+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
+RUN pip3 install open3d==v0.18.0 
+RUN pip3 install polygon3 \
+    shapely \
+    torchfile \
+    opencv-python \
+    pyfastnoisesimd \
+    rapidfuzz \
+    termcolor \
+    scikit-image 
+RUN python3 -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
+# --ignore-installed PyYAML==3.13
+# COPY ./requirement/package_apt.txt /
+# COPY ./requirement/requirement_pip.txt /
+# RUN apt update && xargs -a /package_apt.txt apt install -y
+# RUN pip3 install -r /requirement_pip.txt
+# RUN rm /package_apt.txt /requirement_pip.txt
 
 ## ROS1 installation
 RUN apt update && sudo apt install -y curl gnupg2 lsb-release
@@ -60,6 +77,11 @@ RUN apt install -y python3-rosdep python3-rosinstall-generator python3-vcstool b
 RUN apt-get install -y python3-pcl
 
 RUN echo "ROS $ros1_distro installed successfully"
+
+## Setup ompl
+# COPY ./requirement/setup_repo.sh /
+# RUN sh /setup_repo.sh
+# RUN rm /setup_repo.sh
 
 ## setting
 RUN chown -R ${USER}:${USER} ${HOME}/

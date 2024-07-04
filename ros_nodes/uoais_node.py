@@ -240,7 +240,7 @@ class UOAIS():
             """
             convert camera_color_optical_frame to camer_link
             """
-            transform_stamped = self.tf_buffer.lookup_transform('base_link', depth_msg.header.frame_id, rospy.Time(0))
+            transform_stamped = self.tf_buffer.lookup_transform('camera_link', depth_msg.header.frame_id, rospy.Time(0))
             trans = np.array([transform_stamped.transform.translation.x,
                               transform_stamped.transform.translation.y,
                               transform_stamped.transform.translation.z])
