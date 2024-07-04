@@ -1,10 +1,9 @@
-
 FROM nvidia/cuda:11.3.1-cudnn8-devel-ubuntu20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
-ENV ros2_distro=foxy
+ENV ros1_distro=noetic
 ###################################### user #####################################
 
 ENV SHELL=/bin/bash \
@@ -24,6 +23,7 @@ RUN echo "root:root" | chpasswd
 RUN echo "${USER}:iscilab" | chpasswd
 
 ## basic tools
+
 RUN apt-get update && apt-get install -y \
     curl \
     lsb-release \
@@ -48,35 +48,18 @@ RUN pip3 install --upgrade pip
 ## Dependency installation
 RUN pip3 install torch==1.10.2+cu113 torchvision==0.11.3+cu113 torchaudio==0.10.2+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
 
-## ROS2 installation
-RUN apt update && \
-    apt-get install -y locales && \
-    locale-gen en_US en_US.UTF-8 && \ 
-    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 && \
-    export LANG=en_US.UTF-8 && \
-    apt-get update && \
-    apt-get install -y gnupg2 
-RUN sh -c 'echo "deb http://mirrors.aliyun.com/ros2/ubuntu/ $(lsb_release -cs) main" > /etc/apt/sources.list.d/ros2-latest.list'
-RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add - 
-RUN apt-get update 
-RUN apt-get install -y ros-$ros2_distro-desktop 
+## ROS1 installation
+RUN apt update && sudo apt install -y curl gnupg2 lsb-release
+RUN sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
+RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo apt-key add -
+RUN apt update
+RUN apt install -y ros-$ros1_distro-desktop-full
+ 
+# Install ROS 1 build tools
+RUN apt install -y python3-rosdep python3-rosinstall-generator python3-vcstool build-essential
+RUN apt-get install -y python3-pcl
 
-# Install ROS 2 build tools
-RUN apt-get update && \
-    apt-get install -y \
-    python3-colcon-common-extensions \
-    python3-rosdep \
-    python3-vcstools \
-    python3-flake8 \
-    python3-setuptools \
-    python3-pytest-cov
-
-RUN echo "ROS $ros2_distro installed successfully"
-
-## Setup ompl
-# COPY ./requirement/setup_repo.sh /
-# RUN sh /setup_repo.sh
-# RUN rm /setup_repo.sh
+RUN echo "ROS $ros1_distro installed successfully"
 
 ## setting
 RUN chown -R ${USER}:${USER} ${HOME}/
