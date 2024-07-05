@@ -25,7 +25,7 @@
     <arg name="ransac_iter" default="10"/>
 
   <!-- UOAIS-Net node  -->
-  <node name="uoais"  pkg="uoais" type="uoais_node.py" output="screen" >
+  <node name="uoais"  pkg="uoais" type="uoais_node_sam.py" output="screen" >
     	<param name="mode" value="$(arg mode)" />
       <param name="rgb" value="$(arg rgb)" />
       <param name="depth" value="$(arg depth)" />

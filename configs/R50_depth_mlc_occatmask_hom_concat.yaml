@@ -76,7 +76,7 @@ INPUT:
   CROP_RATIO: 0.5
   AMODAL: True 
   DEPTH: True
-  DEPTH_ONLY: True
+  DEPTH_ONLY: False
   DEPTH_RANGE: [2500, 15000]
 OUTPUT_DIR: "output/R50_depth_mlc_occatmask_hom_concat"
 SEED: 7

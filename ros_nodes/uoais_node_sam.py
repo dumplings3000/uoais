@@ -20,7 +20,8 @@ from adet.utils.post_process import detector_postprocess, DefaultPredictor
 from foreground_segmentation.model import Context_Guided_Network
 
 from std_msgs.msg import String, Header
-from sensor_msgs.msg import Image, CameraInfo, RegionOfInterest
+from sensor_msgs.msg import Image, CameraInfo, RegionOfInterest, PointCloud2, PointField
+import sensor_msgs.point_cloud2 as pc2
 from uoais.msg import UOAISResults
 from uoais.srv import UOAISRequest, UOAISRequestResponse
 
@@ -30,7 +31,9 @@ class UOAIS():
     def __init__(self):
 
         rospy.init_node("uoais")
-
+        """
+        get ros parameters
+        """
         self.mode = rospy.get_param("~mode", "topic") 
         rospy.loginfo("Starting uoais node with {} mode".format(self.mode))
         self.rgb_topic = rospy.get_param("~rgb", "/camera/color/image_raw")
@@ -49,27 +52,31 @@ class UOAIS():
         self.ransac_threshold = rospy.get_param("~ransac_threshold", 0.003)
         self.ransac_n = rospy.get_param("~ransac_n", 3)
         self.ransac_iter = rospy.get_param("~ransac_iter", 10)
+        """
+        end of ros parameters
+        """
 
+        # initialize cv bridge
         self.cv_bridge = cv_bridge.CvBridge()
         
         # initialize UOAIS-Net and CG-Net
         self.load_models()
-        """
-        add by matt, do some tf2 work to transform frame
-        """
+
+        # tf listener
         self.tf_buffer = tf2_ros.Buffer()
         self.listener = tf2_ros.TransformListener(self.tf_buffer)  # Create a tf listener
+
         self.target_center = None  # x, y and z center of target point cloud
         self.target_pointcloud = None  # point cloud of target
-        """
-        end of add
-        """
+        self.target_amodal_mask = None  # amodal mask of target
 
+        # if use_planeseg, get camera intrinsic
         if self.use_planeseg:
             camera_info = rospy.wait_for_message(camera_info_topic, CameraInfo)
             self.K = camera_info.K
             self.o3d_camera_intrinsic = None
 
+        # decide the mode of operation
         if self.mode == "topic":
             rgb_sub = message_filters.Subscriber(self.rgb_topic, Image)
             depth_sub = message_filters.Subscriber(self.depth_topic, Image)
@@ -77,14 +84,17 @@ class UOAIS():
             self.ts.registerCallback(self.topic_callback)
             self.result_pub = rospy.Publisher("/uoais/results", UOAISResults, queue_size=10)
             rospy.loginfo("uoais results at topic: /uoais/results")
-
         elif self.mode == "service":
             self.srv = rospy.Service('/get_uoais_results', UOAISRequest, self.service_callback)
             rospy.loginfo("uoais results at service: /get_uoais_results")
         else:
             raise NotImplementedError
+        
+        # publishers
+        rospy.loginfo("publishing the results of uoais node : /uoais/target_pcd, targetmask_img, vis_img")
         self.vis_pub = rospy.Publisher("/uoais/vis_img", Image, queue_size=10)
-        rospy.loginfo("visualization results at topic: /uoais/vis_img")
+        self.mask_img_pub = rospy.Publisher("/uoais/targetmask_img", Image, queue_size=10)
+        self.pcd_pub = rospy.Publisher("/uoais/target_pcd", PointCloud2, queue_size=10)
 
 
     def load_models(self):
@@ -140,7 +150,7 @@ class UOAIS():
             uoais_input = np.concatenate([rgb_img, depth_img], -1)        
         outputs = self.predictor(uoais_input)
         instances = detector_postprocess(outputs['instances'], self.H, self.W).to('cpu')
-        preds = instances.pred_masks.detach().cpu().numpy() 
+        preds = instances.pred_masks.detach().cpu().numpy()
         pred_visibles = instances.pred_visible_masks.detach().cpu().numpy() 
         pred_bboxes = instances.pred_boxes.tensor.detach().cpu().numpy() 
         pred_occs = instances.pred_occlusions.detach().cpu().numpy() 
@@ -226,20 +236,10 @@ class UOAIS():
         results.class_ids = [0] * n_instances
 
         """
-        Extra part add by Matt, take depth image and mask as input to generate masked depth image
-        and then turn it into pointcloud
+        images and point clouds preprocessing
         """
-        pointcloud_list = []
-        dis_list = []
-        self.o3d_camera_intrinsic = o3d.camera.PinholeCameraIntrinsic(
-                                        640, 480,
-                                        617.0441284179688*640/ori_W,
-                                        617.0698852539062*480/ori_H,
-                                        322.3338317871094, 238.7687225341797)
+        # get the transform between camera_color_optical_frame and base_link
         try:
-            """
-            convert camera_color_optical_frame to camer_link
-            """
             transform_stamped = self.tf_buffer.lookup_transform('camera_link', depth_msg.header.frame_id, rospy.Time(0))
             trans = np.array([transform_stamped.transform.translation.x,
                               transform_stamped.transform.translation.y,
@@ -253,11 +253,26 @@ class UOAIS():
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
             rospy.logerr("Failed to transform point cloud: {}".format(e))
             return
+        
+        """
+        use mask to get point cloud and process the raw image
+        """
+        # create a list to store the point clouds and images after maskeing
+        pointcloud_list = []
+        masked_img_list = []
+        dis_list = []
+        # camera intrinsic
+        self.o3d_camera_intrinsic = o3d.camera.PinholeCameraIntrinsic(
+                                        640, 480,
+                                        617.0441284179688*640/ori_W,
+                                        617.0698852539062*480/ori_H,
+                                        322.3338317871094, 238.7687225341797)
+        # coord_frame_mesh = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5, origin=[0, 0, 0])
 
-        coord_frame_mesh = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5, origin=[0, 0, 0])
-
+        # get the point cloud list
         for i in range(n_instances):
             mask = np.array(pred_visibles[i]).astype(int)
+            # masking the depth and transform it to point clouds
             un_depth_img = unnormalize_depth(depth_img)
             un_depth_img[np.logical_not(mask)] = 0
             kernel = np.ones((3, 3), np.uint8)
@@ -265,7 +280,6 @@ class UOAIS():
             o3d_rgb_img = o3d.geometry.Image(rgb_img)
             o3d_depth_img = o3d.geometry.Image(un_depth_img)
             rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(o3d_rgb_img, o3d_depth_img)
-
             o3d_pc = o3d.geometry.PointCloud.create_from_rgbd_image(
                                                 rgbd_image, self.o3d_camera_intrinsic)
             sampled_pc = np.asarray(o3d_pc.points)
@@ -273,12 +287,14 @@ class UOAIS():
             pcd_filtered, _ = sampled_o3d_pc.remove_statistical_outlier(nb_neighbors=40, std_ratio=1.5)
             pointcloud_list.append(pcd_filtered)
 
+        # decide the target point cloud and image
+        # target_pointcloud
         if self.target_pointcloud is None:
             dis_list = [np.linalg.norm(x.get_center()) for x in pointcloud_list]  # get distance between point cloud and origina
             index = np.argmin(dis_list)  # choose the closet one as target
             self.target_pointcloud = pointcloud_list[index].transform(T)  # convert the target point cloud to world frame
+            self.target_amodal_mask = np.array(preds[index]).astype(int)  # get the amodal mask of target point cloud
             self.target_center = self.target_pointcloud.get_center()  # get point center of target point cloud in world frame
-            o3d.visualization.draw_geometries([self.target_pointcloud])
         else:
             tran_pc_list = [x.transform(T) for x in pointcloud_list]
             dis_list = [np.linalg.norm(x.get_center() - self.target_center) for x in tran_pc_list]
@@ -286,16 +302,39 @@ class UOAIS():
             closet_pointcloud = tran_pc_list[index]
             self.target_pointcloud.paint_uniform_color([1, 0, 0])
             closet_pointcloud.paint_uniform_color([0, 1, 0])
-            pointclouds = [self.target_pointcloud, closet_pointcloud]  # compare the preview pc and current one
-            o3d.visualization.draw_geometries(pointclouds)
+            # pointclouds = [self.target_pointcloud, closet_pointcloud]  # compare the preview pc and current one
+            # o3d.visualization.draw_geometries(pointclouds)  # visualize the preview pc and current one
+            self.target_pointcloud = closet_pointcloud  # update the target point cloud
+            self.target_center = self.target_pointcloud.get_center()  # update the center of target point cloud in world frame
+        self.target_ros_pointcloud = self.o3d_to_ros(self.target_pointcloud)  # convert the target point cloud to ros format
+
+        # target_image
+        amodel_mask = np.array(preds[index]).astype(int)
+        masked_img = cv2.resize(rgb_img, (self.W, self.H))
+        masked_img[np.logical_not(amodel_mask)] = 0
 
         end_time = time.time()
         print("cost time: {}".format(end_time - start_time))
 
-        """
-        End of add by Matt
-        """
+        self.mask_img_pub.publish(self.cv_bridge.cv2_to_imgmsg(masked_img, encoding="bgr8"))
+        self.pcd_pub.publish(self.target_ros_pointcloud)
+
         return results
+    
+    def o3d_to_ros(self, point_cloud):
+        header = Header()   
+        header.stamp = rospy.Time.now()
+        header.frame_id = 'camera_link'
+
+        fields = [
+            PointField('x', 0, PointField.FLOAT32, 1),
+            PointField('y', 4, PointField.FLOAT32, 1),
+            PointField('z', 8, PointField.FLOAT32, 1)
+        ]
+
+        points = np.asarray(point_cloud.points)
+        cloud = pc2.create_cloud(header, fields, points)
+        return cloud
 
 if __name__ == '__main__':
 
