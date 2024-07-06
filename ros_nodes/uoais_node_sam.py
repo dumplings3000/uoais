@@ -317,8 +317,8 @@ class UOAIS():
             dis_list = [np.linalg.norm(x.get_center() - self.target_center) for x in tran_pc_list]
             index = np.argmin(dis_list)
             closet_pointcloud = tran_pc_list[index]
-            self.target_pointcloud.paint_uniform_color([1, 0, 0])
-            closet_pointcloud.paint_uniform_color([0, 1, 0])
+            # self.target_pointcloud.paint_uniform_color([1, 0, 0])
+            # closet_pointcloud.paint_uniform_color([0, 1, 0])
             # pointclouds = [self.target_pointcloud, closet_pointcloud]  # compare the preview pc and current one
             # o3d.visualization.draw_geometries(pointclouds)  # visualize the preview pc and current one
             self.target_pointcloud = closet_pointcloud  # update the target point cloud

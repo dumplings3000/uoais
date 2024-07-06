@@ -16,10 +16,10 @@
     
   <!-- Foreground segmentation  -->
     <!-- CG-Net  -->
-    <arg name="use_cgnet" default="true"/>
+    <arg name="use_cgnet" default="false"/>
     <arg name="cgnet_weight" default="foreground_segmentation/rgbd_fg.pth"/>
     <!-- RANSAC plane segmentation -->
-    <arg name="use_planeseg" default="false"/>
+    <arg name="use_planeseg" default="true"/>
     <arg name="ransac_threshold" default="0.003"/>
     <arg name="ransac_n" default="3"/>
     <arg name="ransac_iter" default="10"/>
