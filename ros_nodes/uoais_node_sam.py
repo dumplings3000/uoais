@@ -19,7 +19,7 @@ from adet.utils.visualizer import visualize_pred_amoda_occ
 from adet.utils.post_process import detector_postprocess, DefaultPredictor
 from foreground_segmentation.model import Context_Guided_Network
 
-from std_msgs.msg import String, Header
+from std_msgs.msg import Int32, Header 
 from sensor_msgs.msg import Image, CameraInfo, RegionOfInterest, PointCloud2, PointField
 import sensor_msgs.point_cloud2 as pc2
 from uoais.msg import UOAISResults
@@ -66,6 +66,7 @@ class UOAIS():
         self.tf_buffer = tf2_ros.Buffer()
         self.listener = tf2_ros.TransformListener(self.tf_buffer)  # Create a tf listener
 
+        self.inferencing = False
         self.target_center = None  # x, y and z center of target point cloud
         self.target_pointcloud = None  # point cloud of target
         self.target_amodal_mask = None  # amodal mask of target
@@ -77,6 +78,8 @@ class UOAIS():
             self.o3d_camera_intrinsic = None
 
         # decide the mode of operation
+        self.start_sub = rospy.Subscriber('uoais/start', Int32, self.start_callback, queue_size=1)
+        self.start_sub = rospy.Subscriber('uoais/end', Int32, self.end_callback, queue_size=1)
         if self.mode == "topic":
             rgb_sub = message_filters.Subscriber(self.rgb_topic, Image)
             depth_sub = message_filters.Subscriber(self.depth_topic, Image)
@@ -95,6 +98,8 @@ class UOAIS():
         self.vis_pub = rospy.Publisher("/uoais/vis_img", Image, queue_size=10)
         self.mask_img_pub = rospy.Publisher("/uoais/targetmask_img", Image, queue_size=10)
         self.pcd_pub = rospy.Publisher("/uoais/target_pcd", PointCloud2, queue_size=10)
+        rospy.loginfo("publishing /uoais/start to start uoais node and /uoais/end to end uoais node")
+
 
 
     def load_models(self):
@@ -121,17 +126,30 @@ class UOAIS():
 
 
     def topic_callback(self, rgb_msg, depth_msg):
-
-        results = self.inference(rgb_msg, depth_msg)        
-        self.result_pub.publish(results)
+        # self.rgb_msg = rgb_msg
+        # self.depth_msg = depth_msg
+        if self.inferencing:
+            results = self.inference(rgb_msg, depth_msg)        
+            self.result_pub.publish(results)
 
     def service_callback(self, msg):
-
-        rgb_msg = rospy.wait_for_message(self.rgb_topic, Image)
-        depth_msg = rospy.wait_for_message(self.depth_topic, Image)
-        results = self.inference(rgb_msg, depth_msg)        
+        if self.inferencing:
+            rgb_msg = rospy.wait_for_message(self.rgb_topic, Image)
+            depth_msg = rospy.wait_for_message(self.depth_topic, Image)
+            results = self.inference(rgb_msg, depth_msg)        
         return UOAISRequestResponse(results)
-        
+    
+    def start_callback(self, msg):
+        self.inferencing = True
+        # results = self.inference(self.rgb_msg, self.depth_msg)
+        # if self.mode == "topic":
+        #     self.result_pub.publish(results)
+        # elif self.mode == "service":
+        #     return UOAISRequestResponse(results)
+    
+    def end_callback(self, msg):
+        self.inferencing = False
+        self.target_pointcloud = None 
 
     def inference(self, rgb_msg, depth_msg):
         start_time = time.time()
@@ -259,7 +277,6 @@ class UOAIS():
         """
         # create a list to store the point clouds and images after maskeing
         pointcloud_list = []
-        masked_img_list = []
         dis_list = []
         # camera intrinsic
         self.o3d_camera_intrinsic = o3d.camera.PinholeCameraIntrinsic(
@@ -309,9 +326,15 @@ class UOAIS():
         self.target_ros_pointcloud = self.o3d_to_ros(self.target_pointcloud)  # convert the target point cloud to ros format
 
         # target_image
-        amodel_mask = np.array(preds[index]).astype(int)
         masked_img = cv2.resize(rgb_img, (self.W, self.H))
+        amodel_mask = np.array(preds[index]).astype(int)
+        bounding_box = pred_bboxes[index]
+        xi, yi = int(bounding_box[0]), int(bounding_box[1])
+        xf, yf = int(bounding_box[2]), int(bounding_box[3])
+        # print("bounding box: ", xi, yi, xf, yf)
         masked_img[np.logical_not(amodel_mask)] = 0
+        masked_img = masked_img[yi:yf, xi:xf]
+        masked_img = cv2.resize(masked_img, (self.W, self.H))
 
         end_time = time.time()
         print("cost time: {}".format(end_time - start_time))
